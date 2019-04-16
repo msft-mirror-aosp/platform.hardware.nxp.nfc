@@ -12,8 +12,8 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */#include <log/log.h>
-
+ */
+#include <log/log.h>
 #include <phDal4Nfc_messageQueueLib.h>
 #include <phNxpConfig.h>
 #include <phNxpLog.h>
@@ -55,8 +55,6 @@ static uint32_t iCoreInitRspLen;
 
 extern uint32_t timeoutTimerId;
 
-extern NFCSTATUS read_retry();
-
 /************** HAL extension functions ***************************************/
 static void hal_extns_write_rsp_timeout_cb(uint32_t TimerId, void* pContext);
 
@@ -97,6 +95,15 @@ void phNxpNciHal_ext_init(void) {
 *******************************************************************************/
 NFCSTATUS phNxpNciHal_process_ext_rsp(uint8_t* p_ntf, uint16_t* p_len) {
   NFCSTATUS status = NFCSTATUS_SUCCESS;
+
+  if (p_ntf[0] == 0x61 && p_ntf[1] == 0x05 && *p_len < 14) {
+    if(*p_len <= 6) {
+      android_errorWriteLog(0x534e4554, "118152591");
+    }
+    NXPLOG_NCIHAL_E("RF_INTF_ACTIVATED_NTF length error!");
+    status = NFCSTATUS_FAILED;
+    return status;
+  }
 
   if (p_ntf[0] == 0x61 && p_ntf[1] == 0x05 && p_ntf[4] == 0x03 &&
       p_ntf[5] == 0x05 && nxpprofile_ctrl.profile_type == EMV_CO_PROFILE) {
@@ -436,7 +443,7 @@ static NFCSTATUS phNxpNciHal_ext_process_nfc_init_rsp(uint8_t* p_ntf,
       for (i = 0; i < *p_len; i++) {
         snprintf(&print_buffer[i * 2], 3, "%02X", p_ntf[i]);
       }
-      NXPLOG_NCIHAL_E("CORE_RESET_NTF received !");
+      NXPLOG_NCIHAL_D("CORE_RESET_NTF received !");
       NXPLOG_NCIR_E("len = %3d > %s", *p_len, print_buffer);
       phNxpNciHal_emergency_recovery();
       status = NFCSTATUS_FAILED;
@@ -912,7 +919,7 @@ NFCSTATUS phNxpNciHal_send_ese_hal_cmd(uint16_t cmd_len, uint8_t* p_cmd) {
 static void hal_extns_write_rsp_timeout_cb(uint32_t timerId, void* pContext) {
   UNUSED(timerId);
   UNUSED(pContext);
-  NXPLOG_NCIHAL_E("hal_extns_write_rsp_timeout_cb - write timeout!!!");
+  NXPLOG_NCIHAL_D("hal_extns_write_rsp_timeout_cb - write timeout!!!");
   nxpncihal_ctrl.ext_cb_data.status = NFCSTATUS_FAILED;
   usleep(1);
   sem_post(&(nxpncihal_ctrl.syncSpiNfc));
