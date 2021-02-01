@@ -80,6 +80,7 @@ static uint8_t Rx_data[NCI_MAX_DATA_LEN];
 extern int phPalEse_spi_ioctl(phPalEse_ControlCode_t eControlCode,void *pDevHandle, long level);
 uint32_t timeoutTimerId = 0;
 bool nfc_debug_enabled = true;
+static bool sIsForceFwDownloadReqd = false;
 
 /*  Used to send Callback Transceive data during Mifare Write.
  *  If this flag is enabled, no need to send response to Upper layer */
@@ -347,13 +348,12 @@ static NFCSTATUS phNxpNciHal_fw_download(void) {
       continue;
     }
 
-    if (nxpncihal_ctrl.bIsForceFwDwnld) {
+    if (sIsForceFwDownloadReqd) {
       status = phNxpNciHal_getChipInfoInFwDnldMode();
       if (status != NFCSTATUS_SUCCESS) {
         NXPLOG_NCIHAL_E("Unknown chip type, FW can't be upgraded");
         return status;
       }
-      nxpncihal_ctrl.bIsForceFwDwnld = false;
     }
 
     /* Set the obtained device handle to download module */
@@ -362,6 +362,7 @@ static NFCSTATUS phNxpNciHal_fw_download(void) {
     status = phNxpNciHal_fw_download_seq(nxpprofile_ctrl.bClkSrcVal,
                                          nxpprofile_ctrl.bClkFreqVal);
     if (status != NFCSTATUS_SUCCESS) {
+      phDnldNfc_ReSetHwDevHandle();
       fw_retry_count++;
       NXPLOG_NCIHAL_D("Retrying: FW download");
     }
@@ -425,14 +426,12 @@ static NFCSTATUS phNxpNciHal_CheckValidFwVersion(void) {
   unsigned char ufw_current_major_no = 0x00;
   unsigned long num = 0;
   int isfound = 0;
+  unsigned char fw_major_no = ((wFwVerRsp >> 8) & 0x000000FF);
 
   /* extract the firmware's major no */
   ufw_current_major_no = ((0x00FF) & (wFwVer >> 8U));
 
-  if ((ufw_current_major_no == nfcFL._FW_MOBILE_MAJOR_NUMBER) ||
-      ((ufw_current_major_no == FW_MOBILE_MAJOR_NUMBER_PN81A) &&
-        (nxpncihal_ctrl.nci_info.nci_version == NCI_VERSION_2_0)))
-  {
+  if (ufw_current_major_no >= fw_major_no) {
     status = NFCSTATUS_SUCCESS;
   } else if (ufw_current_major_no == sfw_infra_major_no) {
     if (rom_version == FW_MOBILE_ROM_VERSION_PN553 &&
@@ -555,7 +554,6 @@ int phNxpNciHal_MinOpen (){
   const uint16_t max_len = 260;
   NFCSTATUS wConfigStatus = NFCSTATUS_SUCCESS;
   NFCSTATUS status = NFCSTATUS_SUCCESS;
-  nxpncihal_ctrl.bIsForceFwDwnld = false;
   NXPLOG_NCIHAL_D("phNxpNci_MinOpen(): enter");
   /*NCI_INIT_CMD*/
   static uint8_t cmd_init_nci[] = {0x20, 0x01, 0x00};
@@ -668,10 +666,20 @@ int phNxpNciHal_MinOpen (){
 
 init_retry:
   status = phNxpNciHal_send_ext_cmd(sizeof(cmd_reset_nci), cmd_reset_nci);
-  if ((status != NFCSTATUS_SUCCESS) &&
-      (nxpncihal_ctrl.retry_cnt >= MAX_RETRY_COUNT)) {
+  if (status == NFCSTATUS_SUCCESS) {
+    sIsForceFwDownloadReqd = false;
+  } else if (sIsForceFwDownloadReqd) {
+    /* MinOpen can be called from either NFC on or any NFC IOCTL calls from
+     * SPI HAL or system/nfc while Minopen is not done/success, which can
+     * trigger Force FW update during every Minopen. To avoid multiple Force
+     * Force FW upadted return if Force FW update is already done */
+    NXPLOG_NCIHAL_E("%s: Failed after Force FW updated. Exit", __func__);
+    return NFCSTATUS_FAILED;
+  }
+  sIsForceFwDownloadReqd = (status != NFCSTATUS_SUCCESS) &&
+      (nxpncihal_ctrl.retry_cnt >= MAX_RETRY_COUNT);
+  if (sIsForceFwDownloadReqd) {
     NXPLOG_NCIHAL_E("Force FW Download, NFCC not coming out from Standby");
-    nxpncihal_ctrl.bIsForceFwDwnld = true;
     wConfigStatus = NFCSTATUS_FAILED;
     goto force_download;
   } else if (status != NFCSTATUS_SUCCESS) {
@@ -734,8 +742,8 @@ force_download:
     status = phNxpNciHal_fw_download();
     if (NFCSTATUS_FAILED == status){
       wConfigStatus = NFCSTATUS_FAILED;
-      goto clean_and_return;
       NXPLOG_NCIHAL_D("FW download Failed");
+      goto clean_and_return;
     } else if (NFCSTATUS_REJECTED == status) {
       wConfigStatus = NFCSTATUS_SUCCESS;
       NXPLOG_NCIHAL_D("FW download Rejected. Continuiing Nfc Init");
@@ -1237,7 +1245,7 @@ static void phNxpNciHal_read_complete(void* pContext,
  * Returns          Always returns NFCSTATUS_SUCCESS (0).
  *
  ******************************************************************************/
-int phNxpNciHal_core_initialized(uint8_t* p_core_init_rsp_params) {
+int phNxpNciHal_core_initialized(uint16_t core_init_rsp_params_len, uint8_t* p_core_init_rsp_params) {
   NFCSTATUS status = NFCSTATUS_SUCCESS;
   static uint8_t p2p_listen_mode_routing_cmd[] = {0x21, 0x01, 0x07, 0x00, 0x01,
                                                   0x01, 0x03, 0x00, 0x01, 0x05};
@@ -1277,7 +1285,8 @@ int phNxpNciHal_core_initialized(uint8_t* p_core_init_rsp_params) {
   if (nxpncihal_ctrl.halStatus != HAL_STATUS_OPEN) {
     return NFCSTATUS_FAILED;
   }
-  if ((*p_core_init_rsp_params > 0) &&
+  if (core_init_rsp_params_len >= 1 &&
+      (*p_core_init_rsp_params > 0) &&
       (*p_core_init_rsp_params < 4))  // initializing for recovery.
   {
   retry_core_init:
@@ -1711,7 +1720,8 @@ int phNxpNciHal_core_initialized(uint8_t* p_core_init_rsp_params) {
   config_access = false;
   // if recovery mode and length of last command is 0 then only reset the P2P
   // listen mode routing.
-  if ((*p_core_init_rsp_params > 0) && (*p_core_init_rsp_params < 4) &&
+  if (core_init_rsp_params_len >= 36 &&
+      (*p_core_init_rsp_params > 0) && (*p_core_init_rsp_params < 4) &&
       p_core_init_rsp_params[35] == 0) {
     /* P2P listen mode routing */
     status = phNxpNciHal_send_ext_cmd(sizeof(p2p_listen_mode_routing_cmd),
@@ -1773,7 +1783,8 @@ int phNxpNciHal_core_initialized(uint8_t* p_core_init_rsp_params) {
     }
   }
 
-  if ((*p_core_init_rsp_params > 0) && (*p_core_init_rsp_params < 4)) {
+  if (core_init_rsp_params_len >= 1 &&
+      (*p_core_init_rsp_params > 0) && (*p_core_init_rsp_params < 4)) {
     static phLibNfc_Message_t msg;
     uint16_t tmp_len = 0;
     uint8_t uicc_set_mode[] = {0x22, 0x01, 0x02, 0x02, 0x01};
@@ -1812,7 +1823,8 @@ int phNxpNciHal_core_initialized(uint8_t* p_core_init_rsp_params) {
       goto retry_core_init;
     }
 
-    if (*(p_core_init_rsp_params + 1) == 1)  // RF state is Discovery!!
+    if (core_init_rsp_params_len >= 4 &&
+        *(p_core_init_rsp_params + 1) == 1)  // RF state is Discovery!!
     {
       NXPLOG_NCIHAL_W("Sending Set Screen ON State Command as raw packet!!");
       status =
@@ -1824,6 +1836,9 @@ int phNxpNciHal_core_initialized(uint8_t* p_core_init_rsp_params) {
         goto retry_core_init;
       }
 
+      if (p_core_init_rsp_params[2] > (core_init_rsp_params_len - 3)) {
+        return NFCSTATUS_FAILED;
+      }
       NXPLOG_NCIHAL_W("Sending discovery as raw packet!!");
       status = phNxpNciHal_send_ext_cmd(p_core_init_rsp_params[2],
                                         (uint8_t*)&p_core_init_rsp_params[3]);
@@ -1847,7 +1862,8 @@ int phNxpNciHal_core_initialized(uint8_t* p_core_init_rsp_params) {
     }
     NXPLOG_NCIHAL_W("Sending last command for Recovery ");
 
-    if (p_core_init_rsp_params[35] > 0) {  // if length of last command is 0
+    if (core_init_rsp_params_len >= 40 &&
+        p_core_init_rsp_params[35] > 0) {  // if length of last command is 0
                                            // then it doesn't need to send last
                                            // command.
       if (!(((p_core_init_rsp_params[36] == 0x21) &&
@@ -1884,7 +1900,9 @@ int phNxpNciHal_core_initialized(uint8_t* p_core_init_rsp_params) {
         }
 
         p_core_init_rsp_params[35] = (uint8_t)tmp_len;
-
+        if (p_core_init_rsp_params[35] > (core_init_rsp_params_len - 36)) {
+          return NFCSTATUS_FAILED;
+        }
         status = phNxpNciHal_send_ext_cmd(
             p_core_init_rsp_params[35], (uint8_t*)&p_core_init_rsp_params[36]);
         if (status != NFCSTATUS_SUCCESS) {
@@ -1905,13 +1923,14 @@ int phNxpNciHal_core_initialized(uint8_t* p_core_init_rsp_params) {
   // initialize dummy FW recovery variables
   gRecFWDwnld = 0;
   gRecFwRetryCount = 0;
-  if (!((*p_core_init_rsp_params > 0) && (*p_core_init_rsp_params < 4)))
+  if (core_init_rsp_params_len >= 1 &&
+      !((*p_core_init_rsp_params > 0) && (*p_core_init_rsp_params < 4)))
     phNxpNciHal_core_initialized_complete(status);
   else {
   invoke_callback:
     config_access = false;
     if (nxpncihal_ctrl.p_nfc_stack_data_cback != NULL) {
-      *p_core_init_rsp_params = 0;
+      if (core_init_rsp_params_len) *p_core_init_rsp_params = 0;
       NXPLOG_NCIHAL_W("Invoking data callback!!");
       (*nxpncihal_ctrl.p_nfc_stack_data_cback)(nxpncihal_ctrl.rx_data_len,
                                                nxpncihal_ctrl.p_rx_data);
