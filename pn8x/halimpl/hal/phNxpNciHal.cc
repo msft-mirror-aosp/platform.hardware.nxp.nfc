@@ -362,6 +362,7 @@ static NFCSTATUS phNxpNciHal_fw_download(void) {
     status = phNxpNciHal_fw_download_seq(nxpprofile_ctrl.bClkSrcVal,
                                          nxpprofile_ctrl.bClkFreqVal);
     if (status != NFCSTATUS_SUCCESS) {
+      phTmlNfc_ReadAbort();
       phDnldNfc_ReSetHwDevHandle();
       fw_retry_count++;
       if (phTmlNfc_ReadAbort() != NFCSTATUS_SUCCESS) {
@@ -377,6 +378,7 @@ static NFCSTATUS phNxpNciHal_fw_download(void) {
         break;
       }
       NXPLOG_NCIHAL_D("Retrying: FW download");
+      android_errorWriteLog(0x534e4554, "192614125");
     }
   } while ((fw_retry_count < 3) && (status != NFCSTATUS_SUCCESS));
 
@@ -2554,10 +2556,10 @@ int phNxpNciHal_check_ncicmd_write_window(uint16_t cmd_len, uint8_t* p_cmd) {
   }
 
   if ((p_cmd[0] & 0xF0) == 0x20) {
-    clock_gettime(CLOCK_REALTIME, &ts);
+    clock_gettime(CLOCK_MONOTONIC, &ts);
     ts.tv_sec += sem_timedout;
 
-    while ((s = sem_timedwait(&nxpncihal_ctrl.syncSpiNfc, &ts)) == -1 &&
+    while ((s = sem_timedwait_monotonic_np(&nxpncihal_ctrl.syncSpiNfc, &ts)) == -1 &&
            errno == EINTR)
       continue; /* Restart if interrupted by handler */
 
