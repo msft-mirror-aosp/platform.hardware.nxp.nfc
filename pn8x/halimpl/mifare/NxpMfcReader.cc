@@ -271,6 +271,7 @@ void NxpMfcReader::SendIncDecRestoreCmdPart2(uint16_t mfcDataLen,
                                   0x00, 0x00, 0x00, 0x00};
   uint8_t incDecRestorePart2Size =
       (sizeof(incDecRestorePart2) / sizeof(incDecRestorePart2[0]));
+
   if (mfcData[3] == eMifareInc || mfcData[3] == eMifareDec) {
     if (incDecRestorePart2Size >= mfcDataLen) {
       incDecRestorePart2Size = mfcDataLen - 1;
