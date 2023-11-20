@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 NXP
+ * Copyright 2019-2023 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -63,6 +63,7 @@ extern phTmlNfc_Context_t* gpphTmlNfc_Context;
 extern bool nfc_debug_enabled;
 extern NFCSTATUS phNxpLog_EnableDisableLogLevel(uint8_t enable);
 extern phNxpNciClock_t phNxpNciClock;
+extern NfcHalThreadMutex sHalFnLock;
 
 /*******************************************************************************
  **
@@ -80,12 +81,11 @@ extern phNxpNciClock_t phNxpNciClock;
  ********************************************************************************/
 int property_get_intf(const char* propName, char* valueStr,
                       const char* defaultStr) {
-  string paramPropName = propName;
   string propValue;
   string propValueDefault = defaultStr;
   int len = 0;
 
-  propValue = phNxpNciHal_getSystemProperty(paramPropName);
+  propValue = phNxpNciHal_getSystemProperty(propName);
   if (propValue.length() > 0) {
     NXPLOG_NCIHAL_D("property_get_intf , key[%s], propValue[%s], length[%zu]",
                     propName, propValue.c_str(), propValue.length());
@@ -114,10 +114,8 @@ int property_get_intf(const char* propName, char* valueStr,
  **
  ********************************************************************************/
 int property_set_intf(const char* propName, const char* valueStr) {
-  string paramPropName = propName;
-  string propValue = valueStr;
   NXPLOG_NCIHAL_D("property_set_intf, key[%s], value[%s]", propName, valueStr);
-  if (phNxpNciHal_setSystemProperty(paramPropName, propValue))
+  if (phNxpNciHal_setSystemProperty(propName, valueStr))
     return NFCSTATUS_SUCCESS;
   else
     return NFCSTATUS_FAILED;
@@ -152,6 +150,7 @@ systemProperty gsystemProperty = {
     {"nfc.fw.dfl_areacode", ""},
     {"nfc.cover.cover_id", ""},
     {"nfc.cover.state", ""},
+    {"ro.factory.factory_binary", ""},
 };
 const char default_nxp_config_path[] = "/vendor/etc/libnfc-nxp.conf";
 std::set<string> gNciConfigs = {"NXP_SE_COLD_TEMP_ERROR_DELAY",
@@ -191,6 +190,7 @@ std::set<string> gNciConfigs = {"NXP_SE_COLD_TEMP_ERROR_DELAY",
                                 "NFA_CONFIG_FORMAT",
                                 "NXP_T4T_NFCEE_ENABLE",
                                 "NXP_DISCONNECT_TAG_IN_SCRN_OFF",
+                                "NXP_CE_PRIORITY_ENABLED",
                                 "NXP_RDR_REQ_GUARD_TIME",
                                 "OFF_HOST_SIM2_PIPE_ID",
                                 "NXP_ENABLE_DISABLE_LOGS",
@@ -203,12 +203,13 @@ std::set<string> gNciConfigs = {"NXP_SE_COLD_TEMP_ERROR_DELAY",
                                 "NXP_SRD_TIMEOUT",
                                 "NXP_UICC_ETSI_SUPPORT",
                                 "NXP_MINIMAL_FW_VERSION",
-                                "NXP_P2P_DISC_NTF_TIMEOUT",
                                 "NXP_RESTART_RF_FOR_NFCEE_RECOVERY",
                                 "NXP_NFCC_RECOVERY_SUPPORT",
                                 "NXP_AGC_DEBUG_ENABLE",
                                 "NXP_EXTENDED_FIELD_DETECT_MODE",
-                                "LEGACY_MIFARE_READER"};
+                                "NXP_SE_SMB_TERMINAL_TYPE",
+                                "OFF_HOST_ESIM_PIPE_ID",
+                                "OFF_HOST_ESIM2_PIPE_ID"};
 
 /****************************************************************
  * Local Functions
@@ -347,7 +348,7 @@ bool phNxpNciHal_setSystemProperty(string key, string value) {
     }
     phNxpNciHal_setULPDetFlag(flag);
   }
-  gsystemProperty[key] = value;
+  gsystemProperty[key] = std::move(value);
   return stat;
 }
 
@@ -618,9 +619,12 @@ static string phNxpNciHal_parseBytesString(string in) {
 NFCSTATUS phNxpNciHal_resetEse(uint64_t resetType) {
   NFCSTATUS status = NFCSTATUS_FAILED;
 
-  if (nxpncihal_ctrl.halStatus == HAL_STATUS_CLOSE) {
-    if (NFCSTATUS_SUCCESS != phNxpNciHal_MinOpen()) {
-      return NFCSTATUS_FAILED;
+  {
+    NfcHalAutoThreadMutex a(sHalFnLock);
+    if (nxpncihal_ctrl.halStatus == HAL_STATUS_CLOSE) {
+      if (NFCSTATUS_SUCCESS != phNxpNciHal_MinOpen()) {
+        return NFCSTATUS_FAILED;
+      }
     }
   }
 
