@@ -27,7 +27,6 @@
 
 extern bool sendRspToUpperLayer;
 extern bool bEnableMfcExtns;
-extern bool bDisableLegacyMfcExtns;
 
 NxpMfcReader& NxpMfcReader::getInstance() {
   static NxpMfcReader msNxpMfcReader;
@@ -58,7 +57,6 @@ int NxpMfcReader::Write(uint16_t mfcDataLen, const uint8_t* pMfcData) {
     NXPLOG_NCIHAL_E("%s: mfcDataLen is below 4 bytes", __func__);
     return 0;
   }
-
   memcpy(mfcTagCmdBuff, pMfcData, mfcDataLen);
   if (mfcDataLen >= 3) mfcTagCmdBuffLen = mfcDataLen - NCI_HEADER_SIZE;
   BuildMfcCmd(&mfcTagCmdBuff[3], &mfcTagCmdBuffLen);
@@ -487,8 +485,7 @@ void NxpMfcReader::MfcNotifyOnAckReceived(uint8_t* buff) {
   /*
    * If Mifare Activated & received RF data packet
    */
-  if (bEnableMfcExtns && bDisableLegacyMfcExtns &&
-      (buff[0] == NCI_RF_CONN_ID)) {
+  if (bEnableMfcExtns && (buff[0] == NCI_RF_CONN_ID)) {
     int sem_val;
     isAck = (buff[3] == NFCSTATUS_SUCCESS);
     sem_getvalue(&mNacksem, &sem_val);
