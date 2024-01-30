@@ -147,7 +147,7 @@ NFCSTATUS phNxpNciHal_propConfULPDetMode(bool bEnable) {
         }
       }
       /* reset the flag upon exit ulpdet mode */
-      nxpncihal_ctrl.isUlpdetModeEnabled = false;
+      phNxpNciHal_setULPDetFlag(false);
     }
   } while (false);
   NXPLOG_NCIHAL_E("%s: exit. status = %d", __func__, status);
