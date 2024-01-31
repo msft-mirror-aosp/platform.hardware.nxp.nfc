@@ -79,8 +79,8 @@ uint8_t phNxpNciHal_updateAutonomousPwrState(uint8_t num) {
  ******************************************************************************/
 NFCSTATUS phNxpNciHal_setAutonomousMode() {
   if (IS_CHIP_TYPE_L(sn100u)) {
-    NXPLOG_NCIHAL_D("%s : Not applicable for chipType %d", __func__,
-                    nfcFL.chipType);
+    NXPLOG_NCIHAL_D("%s : Not applicable for chipType %s", __func__,
+                    pConfigFL->product[nfcFL.chipType]);
     return NFCSTATUS_SUCCESS;
   }
   phNxpNci_EEPROM_info_t mEEPROM_info = {.request_mode = 0};
@@ -137,6 +137,9 @@ static int8_t get_system_property_se_type(uint8_t se_type) {
     case SE_TYPE_ESE:
       len = property_get("nfc.product.support.ese", valueStr, "");
       break;
+    case SE_TYPE_EUICC:
+      len = property_get("nfc.product.support.euicc", valueStr, "");
+      break;
     case SE_TYPE_UICC:
       len = property_get("nfc.product.support.uicc", valueStr, "");
       break;
@@ -178,6 +181,15 @@ void phNxpNciHal_read_and_update_se_state() {
           num_se++;
         }
         break;
+      case SE_TYPE_EUICC:
+        NXPLOG_NCIHAL_D("Get property : SUPPORT_EUICC %d", val);
+        values[SE_TYPE_EUICC] = val;
+        // Since eSE and eUICC share the same config address
+        // They account for one SE
+        if (val > -1 && values[SE_TYPE_ESE] == -1) {
+          num_se++;
+        }
+        break;
       case SE_TYPE_UICC:
         NXPLOG_NCIHAL_D("Get property : SUPPORT_UICC %d", val);
         values[SE_TYPE_UICC] = val;
@@ -207,12 +219,26 @@ void phNxpNciHal_read_and_update_se_state() {
   for (i = 0; i < NUM_SE_TYPES; i++) {
     switch (i) {
       case SE_TYPE_ESE:
-        if (values[SE_TYPE_ESE] > -1) {
-          *index++ = 0xA0;
-          *index++ = 0xED;
-          *index++ = 0x01;
-          *index++ = values[SE_TYPE_ESE];
+      case SE_TYPE_EUICC:
+        if (values[SE_TYPE_ESE] == -1 && values[SE_TYPE_EUICC] == -1) {
+          // No value defined
+          break;
         }
+        *index++ = 0xA0;
+        *index++ = 0xED;
+        *index++ = 0x01;
+
+        *index = 0x00;
+        if (values[SE_TYPE_ESE] > -1) {
+          *index = *index | values[SE_TYPE_ESE];
+        }
+        if (values[SE_TYPE_EUICC] > -1) {
+          *index = *index | values[SE_TYPE_EUICC] << 1;
+        }
+        NXPLOG_NCIHAL_D("Combined value for eSE/eUICC is 0x%.2x", *index);
+        index++;
+        i++;  // both cases taken care
+
         break;
       case SE_TYPE_UICC:
         if (values[SE_TYPE_UICC] > -1) {
@@ -236,7 +262,7 @@ void phNxpNciHal_read_and_update_se_state() {
   while (status != NFCSTATUS_SUCCESS && retry_cnt < 3) {
     status = phNxpNciHal_send_ext_cmd(sizeof(set_cfg_cmd), set_cfg_cmd);
     retry_cnt++;
-    NXPLOG_NCIHAL_E("Get Cfg Retry cnt=%x", retry_cnt);
+    NXPLOG_NCIHAL_E("set Cfg Retry cnt=%x", retry_cnt);
   }
 }
 
@@ -469,8 +495,8 @@ NFCSTATUS phNxpNciHal_send_get_cfg(const uint8_t* cmd_get_cfg, long cmd_len) {
  *****************************************************************************/
 NFCSTATUS phNxpNciHal_configure_merge_sak() {
   if (IS_CHIP_TYPE_L(sn100u)) {
-    NXPLOG_NCIHAL_D("%s : Not applicable for chipType %d", __func__,
-                    nfcFL.chipType);
+    NXPLOG_NCIHAL_D("%s : Not applicable for chipType %s", __func__,
+                    pConfigFL->product[nfcFL.chipType]);
     return NFCSTATUS_SUCCESS;
   }
   long retlen = 0;
@@ -559,17 +585,19 @@ NFCSTATUS phNxpNciHal_setSrdtimeout() {
  *
  ******************************************************************************/
 NFCSTATUS phNxpNciHal_setExtendedFieldMode() {
-  const uint8_t enable_val = 0x01;
-  const uint8_t disable_val = 0x00;
-  uint8_t extended_field_mode = disable_val;
+  const uint8_t enableWithOutCMAEvents = 0x01;
+  const uint8_t enableWithCMAEvents = 0x03;
+  const uint8_t disableEvents = 0x00;
+  uint8_t extended_field_mode = disableEvents;
   phNxpNci_EEPROM_info_t mEEPROM_info = {.request_mode = 0};
   NFCSTATUS status = NFCSTATUS_FEATURE_NOT_SUPPORTED;
 
   if (IS_CHIP_TYPE_GE(sn100u) &&
       GetNxpNumValue(NAME_NXP_EXTENDED_FIELD_DETECT_MODE, &extended_field_mode,
                      sizeof(extended_field_mode))) {
-    if (extended_field_mode == enable_val ||
-        extended_field_mode == disable_val) {
+    if (extended_field_mode == enableWithOutCMAEvents ||
+        extended_field_mode == enableWithCMAEvents ||
+        extended_field_mode == disableEvents) {
       mEEPROM_info.buffer = &extended_field_mode;
       mEEPROM_info.bufflen = sizeof(extended_field_mode);
       mEEPROM_info.request_type = EEPROM_EXT_FIELD_DETECT_MODE;
@@ -603,8 +631,8 @@ NFCSTATUS phNxpNciHal_configGPIOControl(uint8_t gpioCtrl[], uint8_t len) {
     return NFCSTATUS_INVALID_PARAMETER;
   }
   if (nfcFL.chipType <= sn100u) {
-    NXPLOG_NCIHAL_D("%s : Not applicable for chipType %d", __func__,
-                    nfcFL.chipType);
+    NXPLOG_NCIHAL_D("%s : Not applicable for chipType %s", __func__,
+                    pConfigFL->product[nfcFL.chipType]);
     return status;
   }
   phNxpNci_EEPROM_info_t mEEPROM_info = {.request_mode = 0};
@@ -653,6 +681,79 @@ void phNxpNciHal_decodeGpioStatus(void) {
                   gpios_data.platform_gpios_status.irq,
                   gpios_data.platform_gpios_status.ven,
                   gpios_data.platform_gpios_status.fw_dwl);
+  }
+}
+
+/******************************************************************************
+ * Function         phNxpNciHal_setDCDCConfig()
+ *
+ * Description      Sets DCDC On/Off
+ *
+ * Returns          void
+ *
+ *****************************************************************************/
+
+void phNxpNciHal_setDCDCConfig(void) {
+  uint8_t NXP_CONF_DCDC_ON[] = {
+      0x20, 0x02, 0xDA, 0x04, 0xA0, 0x0E, 0x30, 0x7B, 0x00, 0xDE, 0xBA, 0xC4,
+      0xC4, 0xC9, 0x00, 0x00, 0x00, 0xA8, 0x00, 0x37, 0xBE, 0xFF, 0xFF, 0x03,
+      0x00, 0x00, 0x00, 0x28, 0x28, 0x28, 0x28, 0x0A, 0x50, 0x50, 0x00, 0x0A,
+      0x64, 0x0D, 0x08, 0x04, 0x81, 0x0E, 0x20, 0x00, 0x00, 0x00, 0x00, 0x17,
+      0x33, 0x14, 0x07, 0x84, 0x38, 0x20, 0x0F, 0xA0, 0xA4, 0x85, 0x14, 0x00,
+      0x01, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x07, 0x00, 0x0B, 0x00, 0x0E,
+      0x00, 0x12, 0x00, 0x15, 0x00, 0x19, 0x00, 0x1D, 0x00, 0x21, 0x00, 0x24,
+      0x00, 0x28, 0x00, 0x2B, 0x00, 0x2E, 0x00, 0x32, 0x00, 0x35, 0x00, 0x38,
+      0x00, 0x3B, 0x00, 0x3E, 0x00, 0x41, 0x00, 0x44, 0x00, 0x47, 0x00, 0x4A,
+      0x00, 0x4C, 0x00, 0x4F, 0x00, 0x51, 0x00, 0x53, 0x00, 0x56, 0x00, 0x58,
+      0x00, 0x5A, 0x00, 0x5C, 0x00, 0x5E, 0x00, 0x5F, 0x00, 0x61, 0x00, 0x63,
+      0x00, 0x64, 0x00, 0x66, 0x00, 0x67, 0x00, 0x69, 0x00, 0x6A, 0x00, 0x6B,
+      0x00, 0x6C, 0x00, 0x6D, 0x00, 0x6E, 0x00, 0x6F, 0x00, 0x70, 0x00, 0x71,
+      0x00, 0x72, 0x00, 0x73, 0x00, 0x73, 0x00, 0x74, 0x00, 0x75, 0x00, 0x75,
+      0x00, 0x76, 0x00, 0x76, 0x00, 0x77, 0x00, 0x77, 0x00, 0x78, 0x00, 0x78,
+      0x00, 0x79, 0x00, 0x79, 0x00, 0x79, 0x00, 0x7A, 0x00, 0x7A, 0x00, 0xA0,
+      0x10, 0x11, 0x01, 0x06, 0x74, 0x78, 0x00, 0x00, 0x41, 0xF4, 0xC5, 0x00,
+      0xFF, 0x04, 0x00, 0x04, 0x80, 0x5E, 0x01, 0xA0, 0x11, 0x07, 0x01, 0x80,
+      0x32, 0x01, 0xC8, 0x03, 0x00};
+
+  uint8_t NXP_CONF_DCDC_OFF[] = {
+      0x20, 0x02, 0xDA, 0x04, 0xA0, 0x0E, 0x30, 0x7B, 0x00, 0x9E, 0xBA, 0x01,
+      0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x37, 0xBE, 0xFF, 0xFF, 0x03,
+      0x00, 0x00, 0x00, 0x12, 0x12, 0x12, 0x12, 0x0A, 0x50, 0x50, 0x00, 0x0A,
+      0x64, 0x0D, 0x08, 0x04, 0x81, 0x0E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x17,
+      0x33, 0x14, 0x07, 0x84, 0x38, 0x20, 0x0F, 0xA0, 0xA4, 0x85, 0x14, 0x00,
+      0x01, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x07, 0x00, 0x0B, 0x00, 0x0E,
+      0x00, 0x12, 0x00, 0x15, 0x00, 0x19, 0x00, 0x1D, 0x00, 0x21, 0x00, 0x24,
+      0x00, 0x28, 0x00, 0x2B, 0x00, 0x2E, 0x00, 0x32, 0x00, 0x35, 0x00, 0x38,
+      0x00, 0x3B, 0x00, 0x3E, 0x00, 0x41, 0x00, 0x44, 0x00, 0x47, 0x00, 0x4A,
+      0x00, 0x4C, 0x00, 0x4F, 0x00, 0x51, 0x00, 0x53, 0x00, 0x56, 0x00, 0x58,
+      0x00, 0x5A, 0x00, 0x5C, 0x00, 0x5E, 0x00, 0x5F, 0x00, 0x61, 0x00, 0x63,
+      0x00, 0x64, 0x00, 0x66, 0x00, 0x67, 0x00, 0x69, 0x00, 0x6A, 0x00, 0x6B,
+      0x00, 0x6C, 0x00, 0x6D, 0x00, 0x6E, 0x00, 0x6F, 0x00, 0x70, 0x00, 0x71,
+      0x00, 0x72, 0x00, 0x73, 0x00, 0x73, 0x00, 0x74, 0x00, 0x75, 0x00, 0x75,
+      0x00, 0x76, 0x00, 0x76, 0x00, 0x77, 0x00, 0x77, 0x00, 0x78, 0x00, 0x78,
+      0x00, 0x79, 0x00, 0x79, 0x00, 0x79, 0x00, 0x7A, 0x00, 0x7A, 0x00, 0xA0,
+      0x10, 0x11, 0x01, 0x06, 0x74, 0x78, 0x00, 0x00, 0x41, 0xF4, 0xC5, 0x00,
+      0xFF, 0x04, 0x00, 0x04, 0x80, 0x5E, 0x01, 0xA0, 0x11, 0x07, 0x01, 0x80,
+      0x32, 0x01, 0xC8, 0x03, 0x00};
+  unsigned long enable = 0;
+  NFCSTATUS status = NFCSTATUS_FAILED;
+  if (!GetNxpNumValue(NAME_NXP_ENABLE_DCDC_ON, (void*)&enable,
+                      sizeof(enable))) {
+    NXPLOG_NCIHAL_D("NAME_NXP_ENABLE_DCDC_ON not found:");
+    return;
+  }
+  NXPLOG_NCIHAL_D("Perform DCDC config");
+  if (enable == 1) {
+    // DCDC On
+    status = phNxpNciHal_send_ext_cmd(sizeof(NXP_CONF_DCDC_ON),
+                                      &(NXP_CONF_DCDC_ON[0]));
+  } else {
+    // DCDC Off
+    status = phNxpNciHal_send_ext_cmd(sizeof(NXP_CONF_DCDC_OFF),
+                                      &(NXP_CONF_DCDC_OFF[0]));
+  }
+  if (status != NFCSTATUS_SUCCESS) {
+    NXPLOG_NCIHAL_E("SetConfig for DCDC failed");
   }
 }
 
