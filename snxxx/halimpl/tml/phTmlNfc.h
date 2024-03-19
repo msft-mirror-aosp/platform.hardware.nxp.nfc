@@ -51,7 +51,7 @@
  * The 4096 bytes fragment len is supported during SN300 FW DNLD.
  * If this macro is not defined, then the fragment len will fallback to 554.
  */
-#define PH_TMLNFC_HDLL_4K_WRITE_SUPPORTED
+// #define PH_TMLNFC_HDLL_4K_WRITE_SUPPORTED
 /*
  * Fragment Length for SNXXX and PN547
  */
