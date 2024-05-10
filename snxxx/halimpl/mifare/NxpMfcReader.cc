@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- *  Copyright 2019-2021 NXP
+ *  Copyright 2019-2023 NXP
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -16,15 +16,17 @@
  *
  ******************************************************************************/
 #include "NxpMfcReader.h"
+
+#include <log/log.h>
 #include <phNfcCompId.h>
 #include <phNxpLog.h>
 #include <phNxpNciHal_Adaptation.h>
 #include <phNxpNciHal_ext.h>
+
 #include "phNxpNciHal.h"
 
 extern bool sendRspToUpperLayer;
 extern bool bEnableMfcExtns;
-extern bool bDisableLegacyMfcExtns;
 
 NxpMfcReader& NxpMfcReader::getInstance() {
   static NxpMfcReader msNxpMfcReader;
@@ -42,19 +44,24 @@ NxpMfcReader& NxpMfcReader::getInstance() {
 **
 *******************************************************************************/
 int NxpMfcReader::Write(uint16_t mfcDataLen, const uint8_t* pMfcData) {
+  // Eg:- From the App pMfcData- {|PART1-00 00 06 C1 04| PART2-01 00 00 00|}
   uint16_t mfcTagCmdBuffLen = 0;
   uint8_t mfcTagCmdBuff[MAX_MFC_BUFF_SIZE] = {0};
+  uint16_t mfcTagCmdRemainingCmdLen = mfcDataLen;
 
   if (mfcDataLen > MAX_MFC_BUFF_SIZE) {
     android_errorWriteLog(0x534e4554, "169259605");
     mfcDataLen = MAX_MFC_BUFF_SIZE;
+  } else if (mfcDataLen < MIN_MFC_BUFF_SIZE) {
+    android_errorWriteLog(0x534e4554, "287677822");
+    NXPLOG_NCIHAL_E("%s: mfcDataLen is below 4 bytes", __func__);
+    return 0;
   }
   memcpy(mfcTagCmdBuff, pMfcData, mfcDataLen);
   if (mfcDataLen >= 3) mfcTagCmdBuffLen = mfcDataLen - NCI_HEADER_SIZE;
   BuildMfcCmd(&mfcTagCmdBuff[3], &mfcTagCmdBuffLen);
 
   mfcTagCmdBuff[2] = mfcTagCmdBuffLen;
-  mfcDataLen = mfcTagCmdBuffLen + NCI_HEADER_SIZE;
 
   if (checkIsMFCIncDecRestore(pMfcData[3])) {
     if (sem_init(&mNacksem, 0, 0) != 0) {
@@ -62,14 +69,17 @@ int NxpMfcReader::Write(uint16_t mfcDataLen, const uint8_t* pMfcData) {
       return 0;
     }
   }
-  int writtenDataLen = phNxpNciHal_write_internal(mfcDataLen, mfcTagCmdBuff);
+  int writtenDataLen = phNxpNciHal_write_internal(
+      mfcTagCmdBuffLen + NCI_HEADER_SIZE, mfcTagCmdBuff);
 
   /* send TAG_CMD part 2 for Mifare increment ,decrement and restore commands */
   if (checkIsMFCIncDecRestore(pMfcData[3])) {
     MfcWaitForAck();
     if (isAck) {
       NXPLOG_NCIHAL_D("part 1 command Acked");
-      SendIncDecRestoreCmdPart2(mfcDataLen, pMfcData);
+      SendIncDecRestoreCmdPart2(
+          mfcTagCmdRemainingCmdLen - MFC_TAG_INCR_DECR_CMD_PART1_LEN,
+          &pMfcData[0]);
     } else {
       NXPLOG_NCIHAL_E("part 1 command NACK");
     }
@@ -220,8 +230,10 @@ void NxpMfcReader::BuildWrite16Cmd() {
   mMfcTagCmdIntfData.sendBufLen = mMfcTagCmdIntfData.sendBufLen - 1;
   uint8_t buff[mMfcTagCmdIntfData.sendBufLen];
   memset(buff, 0, mMfcTagCmdIntfData.sendBufLen);
-  memcpy(buff, mMfcTagCmdIntfData.sendBuf + 2, mMfcTagCmdIntfData.sendBufLen);
-  memcpy(mMfcTagCmdIntfData.sendBuf + 1, buff, mMfcTagCmdIntfData.sendBufLen);
+  memcpy(buff, mMfcTagCmdIntfData.sendBuf + 2,
+         (mMfcTagCmdIntfData.sendBufLen - 1));
+  memcpy(mMfcTagCmdIntfData.sendBuf + 1, buff,
+         (mMfcTagCmdIntfData.sendBufLen - 1));
 }
 
 /*******************************************************************************
@@ -300,20 +312,26 @@ void NxpMfcReader::AuthForWrite() {
 void NxpMfcReader::SendIncDecRestoreCmdPart2(uint16_t mfcDataLen,
                                              const uint8_t* mfcData) {
   NFCSTATUS status = NFCSTATUS_SUCCESS;
+  bool isError = false;
   /* Build TAG_CMD part 2 for Mifare increment ,decrement and restore commands*/
   uint8_t incDecRestorePart2[] = {0x00, 0x00, 0x05, (uint8_t)eMfRawDataXchgHdr,
                                   0x00, 0x00, 0x00, 0x00};
   uint8_t incDecRestorePart2Size =
       (sizeof(incDecRestorePart2) / sizeof(incDecRestorePart2[0]));
-
   if (mfcData[3] == eMifareInc || mfcData[3] == eMifareDec) {
-    if (incDecRestorePart2Size >= mfcDataLen) {
-      incDecRestorePart2Size = mfcDataLen - 1;
-      android_errorWriteLog(0x534e4554, "238177877");
+    if (mfcDataLen > MFC_TAG_INCR_DECR_CMD_PART2_LEN) {
+      isError = true;
+      incDecRestorePart2Size = MFC_TAG_INCR_DECR_CMD_PART2_LEN;
+    } else if (mfcDataLen < MFC_TAG_INCR_DECR_CMD_PART2_LEN) {
+      isError = true;
+      incDecRestorePart2Size = mfcDataLen;
     }
-    for (int i = 4; i < incDecRestorePart2Size; i++) {
-      incDecRestorePart2[i] = mfcData[i + 1];
-    }
+  }
+  if (isError) {
+    android_errorWriteLog(0x534e4554, "238177877");
+  }
+  for (int i = 4; i < incDecRestorePart2Size; i++) {
+    incDecRestorePart2[i] = mfcData[i + 1];
   }
   sendRspToUpperLayer = false;
   status = phNxpNciHal_send_ext_cmd(incDecRestorePart2Size, incDecRestorePart2);
@@ -384,6 +402,10 @@ NFCSTATUS NxpMfcReader::AnalyzeMfcResp(uint8_t* pBuff, uint16_t* pBufflen) {
       } break;
 
       case eMfcAuthRsp: {
+        if (*pBufflen < 2) {
+          status = NFCSTATUS_FAILED;
+          break;
+        }
         /* check the status byte */
         if (NFCSTATUS_SUCCESS == pBuff[1]) {
           status = NFCSTATUS_SUCCESS;
@@ -463,8 +485,7 @@ void NxpMfcReader::MfcNotifyOnAckReceived(uint8_t* buff) {
   /*
    * If Mifare Activated & received RF data packet
    */
-  if (bEnableMfcExtns && bDisableLegacyMfcExtns &&
-      (buff[0] == NCI_RF_CONN_ID)) {
+  if (bEnableMfcExtns && (buff[0] == NCI_RF_CONN_ID)) {
     int sem_val;
     isAck = (buff[3] == NFCSTATUS_SUCCESS);
     sem_getvalue(&mNacksem, &sem_val);

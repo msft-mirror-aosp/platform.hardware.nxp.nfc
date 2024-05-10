@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 NXP
+ * Copyright 2021-2023 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -429,11 +429,10 @@ void phNxpNciHal_RecoverFWTearDown(void) {
   }
 
   phTmlNfc_EnableFwDnldMode(true);
-  nxpncihal_ctrl.fwdnld_mode_reqd = TRUE;
   bool bEnableNormalMode = true;
   if (!phNxpNciHal_determineChipTypeDlMode()) {
     NXPLOG_NCIHAL_E("Not able to determine chiptype");
-  } else if (nfcFL.chipType != sn100u) {
+  } else if (IS_CHIP_TYPE_NE(sn100u)) {
     NXPLOG_NCIHAL_E("Recovery not supported for chiptype (%d)", nfcFL.chipType);
   } else if (phNxpNciHal_isSessionClosed()) {
     NXPLOG_NCIHAL_D("FW Dnld session is closed");
@@ -541,9 +540,6 @@ static NFCSTATUS phnxpNciHal_partialOpen(void) {
   tOsalConfig.pLogFile = NULL;
   tTmlConfig.dwGetMsgThreadId = (uintptr_t)nxpncihal_ctrl.gDrvCfg.nClientId;
 
-  /* Set Default Fragment Length */
-  tTmlConfig.fragment_len = NCI_CMDRESP_MAX_BUFF_SIZE_PN557;
-
   /* Initialize TML layer */
   if (phTmlNfc_Init(&tTmlConfig) != NFCSTATUS_SUCCESS) {
     NXPLOG_NCIHAL_E("phTmlNfc_Init Failed");
@@ -581,7 +577,6 @@ static NFCSTATUS phnxpNciHal_partialOpen(void) {
  * Returns          void
  *******************************************************************************/
 static void phnxpNciHal_partialClose(void) {
-  NFCSTATUS status = NFCSTATUS_SUCCESS;
   phLibNfc_Message_t msg;
   nxpncihal_ctrl.halStatus = HAL_STATUS_CLOSE;
 
@@ -591,9 +586,9 @@ static void phnxpNciHal_partialClose(void) {
     msg.Size = 0;
     phTmlNfc_DeferredCall(gpphTmlNfc_Context->dwCallbackThreadId, &msg);
     /* Abort any pending read and write */
-    status = phTmlNfc_ReadAbort();
-    status = phTmlNfc_WriteAbort();
-    status = phTmlNfc_Shutdown();
+    phTmlNfc_ReadAbort();
+    phTmlNfc_WriteAbort();
+    phTmlNfc_Shutdown();
     if (0 != pthread_join(nxpncihal_ctrl.client_thread, (void**)NULL)) {
       NXPLOG_TML_E("Fail to kill client thread!");
     }

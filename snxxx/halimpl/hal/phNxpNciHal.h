@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2021 NXP
+ * Copyright 2010-2023 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,39 +23,27 @@
 #ifdef NXP_BOOTTIME_UPDATE
 #include "eSEClientIntf.h"
 #endif
+
 #include "eSEClientExtns.h"
 #include "phNxpNciHal_IoctlOperations.h"
-
-#include <vendor/nxp/nxpnfc/2.0/types.h>
 
 /********************* Definitions and structures *****************************/
 #define MAX_RETRY_COUNT 5
 #define NCI_MAX_DATA_LEN 300
 #define NCI_POLL_DURATION 500
 #define HAL_NFC_ENABLE_I2C_FRAGMENTATION_EVT 0x07
-#undef P2P_PRIO_LOGIC_HAL_IMP
 #define NCI_VERSION_2_0 0x20
 #define NCI_VERSION_1_1 0x11
 #define NCI_VERSION_1_0 0x10
 #define NCI_VERSION_UNKNOWN 0x00
-#define NXP_AUTH_TIMEOUT_BUF_LEN 0x04
-#define SN1XX_ROM_VERSION 0x01
-#define SN1XX_FW_MAJOR_VERSION 0x10
-#define SN2XX_ROM_VERSION 0x01
-#define SN2XX_FW_MAJOR_VERSION 0x01
+#define SNXXX_NXP_AUTH_TIMEOUT_BUF_LEN 0x05
+#define PN557_NXP_AUTH_TIMEOUT_BUF_LEN 0x0C
 
 /*Mem alloc with 8 byte alignment*/
 #define size_align(sz) ((((sz)-1) | 7) + 1)
 #define nxp_malloc(size) malloc(size_align((size)))
 
 typedef void(phNxpNciHal_control_granted_callback_t)();
-
-/*ROM CODE VERSION FW*/
-#define FW_MOBILE_ROM_VERSION_PN551 0x10
-#define FW_MOBILE_ROM_VERSION_PN553 0x11
-#define FW_MOBILE_ROM_VERSION_PN557 0x12
-#define NCI_CMDRESP_MAX_BUFF_SIZE_SNXXX (0x22AU)
-#define NCI_CMDRESP_MAX_BUFF_SIZE_PN557 (0x102U)
 
 #define FW_DBG_REASON_AVAILABLE (0xA3)
 
@@ -69,7 +57,7 @@ typedef void(phNxpNciHal_control_granted_callback_t)();
 //#define NCI_MT_CMD 0x20
 //#define NCI_MT_RSP 0x40
 //#define NCI_MT_NTF 0x60
-
+#define NCI_OID_SYSTEM_TERMPERATURE_INFO_NTF 0x42
 #define CORE_RESET_TRIGGER_TYPE_CORE_RESET_CMD_RECEIVED 0x02
 #define CORE_RESET_TRIGGER_TYPE_POWERED_ON 0x01
 #define NCI2_0_CORE_RESET_TRIGGER_TYPE_OVER_TEMPERATURE ((uint8_t)0xA1)
@@ -81,12 +69,10 @@ typedef void(phNxpNciHal_control_granted_callback_t)();
 //#define NCI_MSG_CORE_INIT            0x01
 #define NCI_MT_MASK 0xE0
 #define NCI_OID_MASK 0x3F
-#if (NXP_EXTNS == TRUE)
 /* GID: Group Identifier (byte 0) */
 #define NCI_GID_MASK 0x0F
 #define ORIG_NXPHAL 0x01
 #define ORIG_LIBNFC 0x02
-#endif
 #define NXP_PROPCMD_GID 0x2F
 #define NXP_FLUSH_SRAM_AO_TO_FLASH 0x21
 #define NXP_CORE_GET_CONFIG_CMD 0x03
@@ -178,10 +164,12 @@ typedef struct phNxpNciHal_Control {
   uint8_t read_retry_cnt;
   phNxpNciInfo_t nci_info;
   uint8_t hal_boot_mode;
-  bool_t fwdnld_mode_reqd;
+  bool_t isCoreRstForFwDnld;
   /* to store and restore gpio values */
   phNxpNciGpioInfo_t phNxpNciGpioInfo;
   tNFC_chipType chipType;
+  bool_t power_reset_triggered;
+  bool_t isUlpdetModeEnabled;
 } phNxpNciHal_Control_t;
 
 typedef struct {
@@ -205,7 +193,12 @@ typedef struct phNxpNciMwEepromArea {
   uint8_t p_rx_data[32];
 } phNxpNciMwEepromArea_t;
 
-enum { SE_TYPE_ESE, SE_TYPE_UICC, SE_TYPE_UICC2, NUM_SE_TYPES };
+enum { SE_TYPE_ESE, SE_TYPE_EUICC, SE_TYPE_UICC, SE_TYPE_UICC2, NUM_SE_TYPES };
+
+typedef enum {
+  ANTENNA_CHECK_STATUS,
+  ANTENNA_SET_VDDPA
+} phNxpNci_Antenaa_Actions_type_t;
 
 typedef void (*fpVerInfoStoreInEeprom_t)();
 typedef int (*fpVerifyCscEfsTest_t)(char* nfcc_csc, char* rffilepath,
@@ -213,6 +206,7 @@ typedef int (*fpVerifyCscEfsTest_t)(char* nfcc_csc, char* rffilepath,
 typedef int (*fpRegRfFwDndl_t)(uint8_t* fw_update_req, uint8_t* rf_update_req,
                                uint8_t skipEEPROMRead);
 typedef int (*fpPropConfCover_t)(bool attached, int type);
+typedef int (*fpDoAntennaActivity_t)(phNxpNci_Antenaa_Actions_type_t action);
 void phNxpNciHal_initializeRegRfFwDnld();
 void phNxpNciHal_deinitializeRegRfFwDnld();
 /*set config management*/
@@ -260,7 +254,11 @@ typedef enum {
   EEPROM_UICC2_SESSION_ID,
   EEPROM_CE_ACT_NTF,
   EEPROM_UICC_HCI_CE_STATE,
-  EEPROM_EXT_FIELD_DETECT_MODE
+  EEPROM_EXT_FIELD_DETECT_MODE,
+  EEPROM_CONF_GPIO_CTRL,
+  EEPROM_SET_GPIO_VALUE,
+  EEPROM_POWER_TRACKER_ENABLE,
+  EEPROM_VDDPA,
 } phNxpNci_EEPROM_request_type_t;
 
 typedef struct phNxpNci_EEPROM_info {
@@ -281,7 +279,7 @@ typedef struct phNxpNci_getCfg_info {
   uint8_t atr_res_gen_bytes_len;
   uint8_t pmid_wt[3];
   uint8_t pmid_wt_len;
-  uint8_t auth_cmd_timeout[NXP_AUTH_TIMEOUT_BUF_LEN];
+  uint8_t auth_cmd_timeout[PN557_NXP_AUTH_TIMEOUT_BUF_LEN];
   uint8_t auth_cmd_timeoutlen;
 } phNxpNci_getCfg_info_t;
 typedef enum {
@@ -321,7 +319,6 @@ NFCSTATUS phNxpNciHal_send_get_cfgs();
 int phNxpNciHal_write_unlocked(uint16_t data_len, const uint8_t* p_data,
                                int origin);
 NFCSTATUS request_EEPROM(phNxpNci_EEPROM_info_t* mEEPROM_info);
-int phNxpNciHal_check_config_parameter();
 NFCSTATUS phNxpNciHal_fw_download(uint8_t seq_handler_offset = 0,
                                   bool bIsNfccDlState = false);
 NFCSTATUS phNxpNciHal_nfcc_core_reset_init(bool keep_config = false);
@@ -331,6 +328,7 @@ NFCSTATUS phNxpNciHal_china_tianjin_rf_setting(void);
 NFCSTATUS phNxpNciHal_CheckValidFwVersion(void);
 
 NFCSTATUS phNxpNciHal_send_nfcee_pwr_cntl_cmd(uint8_t type);
+NFCSTATUS phNxpNciHal_nfccClockCfgApply(void);
 /*******************************************************************************
 **
 ** Function         phNxpNciHal_configFeatureList

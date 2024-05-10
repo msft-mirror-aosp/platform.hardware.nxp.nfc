@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- *  Copyright 2018 NXP
+ *  Copyright 2018, 2023 NXP
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@
 
 #include <log/log.h>
 
+#include "NfcExtns.h"
 #include "halimpl/inc/phNxpNciHal_Adaptation.h"
 #include "phNfcStatus.h"
 
@@ -53,6 +54,10 @@ Return<V1_0::NfcStatus> Nfc::open_1_1(
 // Methods from ::android::hardware::nfc::V1_0::INfc follow.
 Return<V1_0::NfcStatus> Nfc::open(
     const sp<V1_0::INfcClientCallback>& clientCallback) {
+  if (mIsServiceStarted) {
+    ALOGD_IF(nfc_debug_enabled, "Nfc::open service is already started");
+    return V1_0::NfcStatus::OK;
+  }
   ALOGD_IF(nfc_debug_enabled, "Nfc::open Enter");
   if (clientCallback == nullptr) {
     ALOGD_IF(nfc_debug_enabled, "Nfc::open null callback");
@@ -63,6 +68,7 @@ Return<V1_0::NfcStatus> Nfc::open(
   }
 
   NFCSTATUS status = phNxpNciHal_open(eventCallback, dataCallback);
+  mIsServiceStarted = true;
   ALOGD_IF(nfc_debug_enabled, "Nfc::open Exit");
   return CHK_STATUS(status);
 }
@@ -78,16 +84,14 @@ Return<V1_0::NfcStatus> Nfc::coreInitialized(const hidl_vec<uint8_t>& data) {
   return CHK_STATUS(status);
 }
 
-Return<V1_0::NfcStatus> Nfc::prediscover() {
-  NFCSTATUS status = phNxpNciHal_pre_discover();
-  return CHK_STATUS(status);
-}
+Return<V1_0::NfcStatus> Nfc::prediscover() { return V1_0::NfcStatus::OK; }
 
 Return<V1_0::NfcStatus> Nfc::close() {
   if (mCallbackV1_1 == nullptr && mCallbackV1_0 == nullptr) {
     return V1_0::NfcStatus::FAILED;
   }
   NFCSTATUS status = phNxpNciHal_close(false);
+  mIsServiceStarted = false;
 
   if (mCallbackV1_1 != nullptr) {
     mCallbackV1_1->unlinkToDeath(this);
@@ -121,6 +125,7 @@ Return<V1_0::NfcStatus> Nfc::closeForPowerOffCase() {
     return V1_0::NfcStatus::FAILED;
   }
   NFCSTATUS status = phNxpNciHal_configDiscShutdown();
+  mIsServiceStarted = false;
 
   if (mCallbackV1_1 != nullptr) {
     mCallbackV1_1->unlinkToDeath(this);
@@ -135,7 +140,8 @@ Return<V1_0::NfcStatus> Nfc::closeForPowerOffCase() {
 
 Return<void> Nfc::getConfig(getConfig_cb hidl_cb) {
   NfcConfig nfcVendorConfig;
-  phNxpNciHal_getVendorConfig(nfcVendorConfig);
+  NfcExtns nfcExtns;
+  nfcExtns.getConfig(nfcVendorConfig);
   hidl_cb(nfcVendorConfig);
   return Void();
 }
