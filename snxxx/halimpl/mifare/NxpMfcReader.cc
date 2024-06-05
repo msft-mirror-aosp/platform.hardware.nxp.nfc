@@ -27,7 +27,6 @@
 
 extern bool sendRspToUpperLayer;
 extern bool bEnableMfcExtns;
-extern bool bDisableLegacyMfcExtns;
 
 NxpMfcReader& NxpMfcReader::getInstance() {
   static NxpMfcReader msNxpMfcReader;
@@ -53,6 +52,10 @@ int NxpMfcReader::Write(uint16_t mfcDataLen, const uint8_t* pMfcData) {
   if (mfcDataLen > MAX_MFC_BUFF_SIZE) {
     android_errorWriteLog(0x534e4554, "169259605");
     mfcDataLen = MAX_MFC_BUFF_SIZE;
+  } else if (mfcDataLen < MIN_MFC_BUFF_SIZE) {
+    android_errorWriteLog(0x534e4554, "287677822");
+    NXPLOG_NCIHAL_E("%s: mfcDataLen is below 4 bytes", __func__);
+    return 0;
   }
   memcpy(mfcTagCmdBuff, pMfcData, mfcDataLen);
   if (mfcDataLen >= 3) mfcTagCmdBuffLen = mfcDataLen - NCI_HEADER_SIZE;
@@ -482,8 +485,7 @@ void NxpMfcReader::MfcNotifyOnAckReceived(uint8_t* buff) {
   /*
    * If Mifare Activated & received RF data packet
    */
-  if (bEnableMfcExtns && bDisableLegacyMfcExtns &&
-      (buff[0] == NCI_RF_CONN_ID)) {
+  if (bEnableMfcExtns && (buff[0] == NCI_RF_CONN_ID)) {
     int sem_val;
     isAck = (buff[3] == NFCSTATUS_SUCCESS);
     sem_getvalue(&mNacksem, &sem_val);

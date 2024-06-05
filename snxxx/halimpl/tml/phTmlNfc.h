@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2022 NXP
+ * Copyright 2010-2023 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,11 +48,20 @@
 #define PH_TMLNFC_RESETDEVICE (0x00008001)
 
 /*
+ * The 4096 bytes fragment len is supported during SN300 FW DNLD.
+ * If this macro is not defined, then the fragment len will fallback to 554.
+ */
+// #define PH_TMLNFC_HDLL_4K_WRITE_SUPPORTED
+/*
  * Fragment Length for SNXXX and PN547
  */
-#define PH_TMLNFC_FRGMENT_SIZE_SNXXX (0x22A)
 #define PH_TMLNFC_FRGMENT_SIZE_PN557 (0x102)
-
+#define PH_TMLNFC_FRGMENT_SIZE_SNXXX (0x22A)
+#ifdef PH_TMLNFC_HDLL_4K_WRITE_SUPPORTED
+#define PH_TMLNFC_FRGMENT_SIZE_SN300 (0x1000)
+#else
+#define PH_TMLNFC_FRGMENT_SIZE_SN300 (0x22A)
+#endif
 /*
 ***************************Globals,Structure and Enumeration ******************
 */
@@ -199,10 +208,6 @@ typedef struct phTmlNfc_Config {
    *
    * This is the thread ID on which the Reader & Writer thread posts message. */
   uintptr_t dwGetMsgThreadId;
-  /* Communication speed between DH and PN54X
-   *
-   * This is the baudrate of the bus for communication between DH and PN54X */
-  uint32_t dwBaudRate;
   uint16_t fragment_len;
 } phTmlNfc_Config_t, *pphTmlNfc_Config_t; /* pointer to phTmlNfc_Config_t */
 
@@ -247,7 +252,6 @@ void phTmlNfc_DeferredCall(uintptr_t dwThreadId,
 void phTmlNfc_ConfigNciPktReTx(phTmlNfc_ConfigRetrans_t eConfig,
                                uint8_t bRetryCount);
 void phTmlNfc_set_fragmentation_enabled(phTmlNfc_i2cfragmentation_t enable);
-phTmlNfc_i2cfragmentation_t phTmlNfc_get_fragmentation_enabled();
 NFCSTATUS phTmlNfc_ConfigTransport();
 void phTmlNfc_EnableFwDnldMode(bool mode);
 bool phTmlNfc_IsFwDnldModeEnabled(void);
