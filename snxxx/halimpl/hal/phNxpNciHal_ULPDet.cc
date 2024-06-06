@@ -1,5 +1,5 @@
 /*
- * Copyright 2022-2023 NXP
+ * Copyright 2022-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 #include "phNxpNciHal_ULPDet.h"
 
+#include <phNfcNciConstants.h>
 #include <phNxpLog.h>
 #include <phTmlNfc.h>
 
@@ -173,8 +174,8 @@ int phNxpNciHal_handleULPDetCommand(uint16_t data_len, const uint8_t* p_data) {
     status = NCI_RSP_OK;
   }
 
-  phNxpNciHal_vendorSpecificCallback(p_data[NCI_OID_INDEX],
-                                     p_data[NCI_MSG_INDEX_FOR_FEATURE],  status);
+  phNxpNciHal_vendorSpecificCallback(
+      p_data[NCI_OID_INDEX], p_data[NCI_MSG_INDEX_FOR_FEATURE], {status});
 
   return p_data[NCI_MSG_LEN_INDEX];
 }
