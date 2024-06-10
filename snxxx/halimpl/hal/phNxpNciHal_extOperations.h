@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2023 NXP
+ * Copyright 2019-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -229,8 +229,20 @@ int phNxpNciHal_handleVendorSpecificCommand(uint16_t data_len,
 **
 ** Function         phNxpNciHal_vendorSpecificCallback()
 **
-** Params           oid, opcode, status
+** Params           oid, opcode, data
 ** Description      This function sends response to Vendor Specific commands
 **
 *******************************************************************************/
-void phNxpNciHal_vendorSpecificCallback(int oid, int opcode, int status);
+void phNxpNciHal_vendorSpecificCallback(int oid, int opcode,
+                                        vector<uint8_t> data);
+
+/*******************************************************************************
+**
+** Function         phNxpNciHal_isObserveModeSupported()
+**
+** Description      check's the observe mode supported or not based on the
+**                  config value
+**
+** Returns          bool: true if supported, otherwise false
+*******************************************************************************/
+bool phNxpNciHal_isObserveModeSupported();
