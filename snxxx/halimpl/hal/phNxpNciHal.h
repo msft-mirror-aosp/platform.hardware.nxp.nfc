@@ -18,6 +18,9 @@
 
 #include <hardware/nfc.h>
 #include <phNxpNciHal_utils.h>
+
+#include <vector>
+
 #include "NxpMfcReader.h"
 #include "NxpNfcCapability.h"
 #ifdef NXP_BOOTTIME_UPDATE
@@ -80,6 +83,8 @@ typedef void(phNxpNciHal_control_granted_callback_t)();
 #define NXP_MAX_CONFIG_STRING_LEN 260
 #define NCI_HEADER_SIZE 3
 
+#define CORE_RESET_NTF_RECOVERY_REQ_COUNT 0x03
+
 typedef struct nci_data {
   uint16_t len;
   uint8_t p_data[NCI_MAX_DATA_LEN];
@@ -90,6 +95,13 @@ typedef enum {
   HAL_STATUS_OPEN,
   HAL_STATUS_MIN_OPEN
 } phNxpNci_HalStatus;
+
+typedef enum {
+  HAL_CLOSED, /* Either hal_close() done or hal_open() is on going */
+  HAL_OPENED, /* hal_open() is done */
+  HAL_OPEN_CORE_INITIALIZING /* core_initialized() ongoing. will be set back to
+                                HAL_OPENED once done. */
+} phNxpNci_HalOpenStatus;
 
 typedef enum {
   HAL_NFC_FW_UPDATE_INVALID = 0x00,
@@ -145,7 +157,7 @@ typedef struct phNxpNciHal_Control {
   phNxpNciHal_control_granted_callback_t* p_control_granted_cback;
 
   /* HAL open status */
-  bool_t hal_open_status;
+  phNxpNci_HalOpenStatus hal_open_status;
 
   /* HAL extensions */
   uint8_t hal_ext_enabled;
@@ -185,13 +197,19 @@ typedef struct phNxpNciClock {
 
 typedef struct phNxpNciRfSetting {
   bool_t isGetRfSetting;
-  uint8_t p_rx_data[20];
+  vector<uint8_t> p_rx_data;
 } phNxpNciRfSetting_t;
 
 typedef struct phNxpNciMwEepromArea {
   bool_t isGetEepromArea;
   uint8_t p_rx_data[32];
 } phNxpNciMwEepromArea_t;
+
+struct phRfMiscSettings {
+  const char* configName;
+  int configPosition;
+  uint8_t configBitMask;
+};
 
 enum { SE_TYPE_ESE, SE_TYPE_EUICC, SE_TYPE_UICC, SE_TYPE_UICC2, NUM_SE_TYPES };
 
@@ -424,5 +442,17 @@ NFCSTATUS phNxpNciHal_restore_uicc_params();
  *
  ******************************************************************************/
 void phNxpNciHal_client_data_callback();
+
+/******************************************************************************
+ * Function         phNxpNciHal_UpdateRfMiscSettings
+ *
+ * Description      This will look the configuration properties and
+ *                  update the RF misc settings
+ *
+ * Returns          bool - true if the RF Misc settings update required
+ *                      otherwise false
+ *
+ ******************************************************************************/
+bool phNxpNciHal_UpdateRfMiscSettings();
 
 #endif /* _PHNXPNCIHAL_H_ */
