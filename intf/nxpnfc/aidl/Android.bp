@@ -15,7 +15,6 @@ aidl_interface {
     srcs: ["vendor/nxp/nxpnfc_aidl/*.aidl"],
     stability: "vintf",
     frozen: true,
-    vndk_use_version: "1",
     backend: {
         cpp: {
             enabled: false,
@@ -24,12 +23,6 @@ aidl_interface {
             sdk_version: "module_current",
             enabled: false,
         },
-        ndk: {
-            vndk: {
-                enabled: false,
-            },
-        },
-
     },
     versions_with_info: [
         {
