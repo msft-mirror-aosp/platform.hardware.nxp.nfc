@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2023 NXP
+ * Copyright 2010-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@
 #ifndef PHTMLNFC_H
 #define PHTMLNFC_H
 
+#include <errno.h>
 #include <phNfcCommon.h>
 
 /*
@@ -53,6 +54,15 @@
 #define PH_TMLNFC_FRGMENT_SIZE_PN557 (0x102)
 #define PH_TMLNFC_FRGMENT_SIZE_SNXXX (0x22A)
 #define PH_TMLNFC_FRGMENT_SIZE_SN300 (0x1000)
+
+/*
+ * Value indicates to NFCC Max read length.
+ */
+#define PH_TMLNFC_MAX_READ_NCI_BUFF_LEN (260)
+/*
+ * Value indicates to NFCC recovery from vbat low.
+ */
+#define PH_TMNFC_VBAT_LOW_ERROR (-ENOTCONN)
 /*
 ***************************Globals,Structure and Enumeration ******************
 */
@@ -188,11 +198,11 @@ typedef struct phTmlNfc_Context {
  * TML Configuration exposed to upper layer.
  */
 typedef struct phTmlNfc_Config {
-  /* Port name connected to PN54X
+  /* Port name connected to NFCC
    *
-   * Platform specific canonical device name to which PN54X is connected.
+   * Platform specific canonical device name to which NFCC is connected.
    *
-   * e.g. On Linux based systems this would be /dev/PN54X
+   * e.g. On Linux based systems this would be /dev/nxp-nci
    */
   int8_t* pDevName;
   /* Callback Thread ID
