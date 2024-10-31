@@ -359,6 +359,15 @@ void* phNxpNciHal_client_thread(void* arg) {
         REENTRANCE_UNLOCK();
         break;
       }
+      case NCI_HAL_VENDOR_MSG: {
+        REENTRANCE_LOCK();
+        if (nxpncihal_ctrl.p_nfc_stack_data_cback != NULL) {
+          (*nxpncihal_ctrl.p_nfc_stack_data_cback)(
+              nxpncihal_ctrl.vendor_msg_len, nxpncihal_ctrl.vendor_msg);
+        }
+        REENTRANCE_UNLOCK();
+        break;
+      }
       case HAL_NFC_FW_UPDATE_STATUS_EVT: {
         REENTRANCE_LOCK();
         if (nxpncihal_ctrl.p_nfc_stack_cback != NULL) {
@@ -1128,6 +1137,8 @@ int phNxpNciHal_write(uint16_t data_len, const uint8_t* p_data) {
   if (bEnableMfcExtns && p_data[NCI_GID_INDEX] == 0x00) {
     return NxpMfcReaderInstance.Write(data_len, p_data);
   } else if (phNxpNciHal_isVendorSpecificCommand(data_len, p_data)) {
+    phNxpNciHal_print_packet("SEND", p_data, data_len,
+                             RfFwRegionDnld_handle == NULL);
     return phNxpNciHal_handleVendorSpecificCommand(data_len, p_data);
   } else if (isObserveModeEnabled() &&
              p_data[NCI_GID_INDEX] == NCI_RF_DISC_COMMD_GID &&
@@ -1472,6 +1483,24 @@ static void phNxpNciHal_read_complete(void* pContext,
 }
 
 /******************************************************************************
+ * Function         phNxpNciHal_notifyPollingFrame
+ *
+ * Description      Send polling info notification to send to upper layer
+ *
+ * Parameters       p_data - Polling loop info notification
+ *
+ * Returns          void
+ *
+ ******************************************************************************/
+void phNxpNciHal_notifyPollingFrame(uint16_t data_len, uint8_t* p_data) {
+  phNxpNciHal_print_packet("RECV", p_data, data_len,
+                           RfFwRegionDnld_handle == NULL);
+  if (nxpncihal_ctrl.p_nfc_stack_data_cback != NULL) {
+    (*nxpncihal_ctrl.p_nfc_stack_data_cback)(data_len, p_data);
+  }
+}
+
+/******************************************************************************
  * Function         phNxpNciHal_client_data_callback
  *
  * Description      This will process the data and sends message to lib-nfc
@@ -1490,9 +1519,16 @@ void phNxpNciHal_client_data_callback() {
   if (isObserveModeEnabled() &&
       nxpncihal_ctrl.p_rx_data[NCI_GID_INDEX] == NCI_PROP_NTF_GID &&
       nxpncihal_ctrl.p_rx_data[NCI_OID_INDEX] == NCI_PROP_LX_NTF_OID) {
+    unsigned long notificationType = 0;
     ReaderPollConfigParser readerPollConfigParser;
+    int isFound = GetNxpNumValue(NAME_NXP_OBSERVE_MODE_REQ_NOTIFICATION_TYPE,
+                                 &notificationType, sizeof(notificationType));
+    if (isFound == 0) {
+      notificationType = 0;
+    }
+    readerPollConfigParser.setNotificationType(notificationType);
     readerPollConfigParser.setReaderPollCallBack(
-        nxpncihal_ctrl.p_nfc_stack_data_cback);
+        phNxpNciHal_notifyPollingFrame);
     readerPollConfigParser.parseAndSendReaderPollInfo(
         nxpncihal_ctrl.p_rx_data, nxpncihal_ctrl.rx_data_len);
   } else {
