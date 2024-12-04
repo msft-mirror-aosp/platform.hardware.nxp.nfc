@@ -2527,14 +2527,14 @@ close_and_return:
       if (status == NFCSTATUS_SUCCESS) {
         break;
       } else {
-        NXPLOG_NCIHAL_E("NCI_CORE_RESET: Failed, perform retry after delay");
+        retry++;
+        NXPLOG_NCIHAL_E("NCI_CORE_RESET: Failed %x, perform retry after delay", retry);
         usleep(1000 * 1000);
         if (nxpncihal_ctrl.halStatus == HAL_STATUS_CLOSE) {
           // make sure read is pending
           NFCSTATUS readStatus = phNxpNciHal_enableTmlRead();
           NXPLOG_NCIHAL_D("read status = %x", readStatus);
         }
-        retry++;
         if (retry > 3) {
           NXPLOG_NCIHAL_E(
               "Maximum retries performed, shall restart HAL to recover");
